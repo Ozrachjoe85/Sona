@@ -9,81 +9,75 @@ import com.sona.app.SonaLine
 import kotlin.concurrent.thread
 import kotlin.math.PI
 import kotlin.math.sin
+import kotlin.math.sign
 
-// The data structure for our procedural "rules"
 data class SonaNote(val frequency: Double, val durationMs: Long, val waveType: String)
 
 class SonaEngine {
-
-    // RULE 1: Analyze an uploaded image to create a procedural sequence
     fun analyzeBitmap(bitmap: Bitmap): List<SonaNote> {
         val scaled = Bitmap.createScaledBitmap(bitmap, 12, 12, false)
-        val notes = mutableListOf<SonaNote>()
-        
-        for (i in 0 until 12) {
-            val pixel = scaled.getPixel(i, i)
-            val r = AndroidColor.red(pixel)
-            val b = AndroidColor.blue(pixel)
-            
-            // Logic: More Red = Higher Pitch, More Blue = Lower Pitch
-            val freq = 200.0 + (r * 2.0) + (b * 0.5)
-            notes.add(SonaNote(freq, 250, "sine"))
+        return (0 until 12).map { i ->
+            val p = scaled.getPixel(i, i)
+            val freq = 150.0 + (AndroidColor.red(p) * 2.0)
+            SonaNote(freq, 200, "sawtooth")
         }
-        return notes
     }
 
-    // RULE 2: Convert a hand-drawn line into a specific procedural note
     fun convertLineToNote(line: SonaLine): SonaNote {
-        // Y-Position determines Pitch (Higher on screen = Higher Frequency)
-        // We map the screen Y to a range between 200Hz and 1000Hz
-        val freq = 1000.0 - (line.yOffset / 2.0).coerceIn(0.0, 800.0)
-        
-        // Thickness determines Duration (Thicker = Longer, bolder note)
-        val duration = (line.thickness * 15).toLong().coerceIn(150, 2000)
-        
-        return SonaNote(freq, duration, "sine")
+        val freq = 900.0 - (line.yOffset / 2.2).coerceIn(0.0, 750.0)
+        val wave = when(line.color) {
+            android.graphics.Color.CYAN -> "sine"
+            android.graphics.Color.MAGENTA -> "square"
+            android.graphics.Color.YELLOW -> "sawtooth"
+            else -> "sine"
+        }
+        return SonaNote(freq, (line.thickness * 12).toLong().coerceIn(200, 2000), wave)
     }
 }
 
 class SonaAudioPlayer {
     private val sampleRate = 44100
 
-    fun playProcedural(notes: List<SonaNote>) {
-        if (notes.isEmpty()) return
-        
+    // For Real-time feedback while drawing
+    fun playInstantTone(freq: Double, waveType: String) {
         thread {
-            notes.forEach { note ->
-                val numSamples = (note.durationMs * sampleRate / 1000).toInt()
-                val buffer = ShortArray(numSamples)
-
-                // Procedural Math: Generating the actual sound wave bit-by-bit
-                for (i in 0 until numSamples) {
-                    val angle = 2.0 * PI * i / (sampleRate / note.frequency)
-                    val sample = sin(angle)
-                    buffer[i] = (sample * Short.MAX_VALUE).toInt().toShort()
-                }
-
-                val audioTrack = AudioTrack.Builder()
-                    .setAudioAttributes(AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_MEDIA)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                        .build())
-                    .setAudioFormat(AudioFormat.Builder()
-                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                        .setSampleRate(sampleRate)
-                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                        .build())
-                    .setBufferSizeInBytes(buffer.size * 2)
-                    .setTransferMode(AudioTrack.MODE_STATIC)
-                    .build()
-
-                audioTrack.write(buffer, 0, buffer.size)
-                audioTrack.play()
-                
-                // Keep the track alive for the duration of the note
-                Thread.sleep(note.durationMs)
-                audioTrack.release()
-            }
+            generateAndPlay(SonaNote(freq, 80, waveType))
         }
+    }
+
+    fun playProcedural(notes: List<SonaNote>) {
+        thread { notes.forEach { generateAndPlay(it) } }
+    }
+
+    private fun generateAndPlay(note: SonaNote) {
+        val numSamples = (note.durationMs * sampleRate / 1000).toInt()
+        val buffer = ShortArray(numSamples)
+
+        for (i in 0 until numSamples) {
+            val t = i.toDouble() / sampleRate
+            val angle = 2.0 * PI * note.frequency * t
+            
+            // SYNTH ENGINE: Adding Harmonics (Overtones)
+            val sample = when(note.waveType) {
+                "sine" -> sin(angle) + 0.5 * sin(2 * angle) + 0.25 * sin(3 * angle)
+                "square" -> sign(sin(angle)) * 0.6
+                "sawtooth" -> (2.0 * (t * note.frequency - Math.floor(0.5 + t * note.frequency)))
+                else -> sin(angle)
+            }
+            
+            buffer[i] = (sample.coerceIn(-1.0, 1.0) * Short.MAX_VALUE * 0.7).toInt().toShort()
+        }
+
+        val track = AudioTrack.Builder()
+            .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).build())
+            .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(sampleRate).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
+            .setBufferSizeInBytes(buffer.size * 2)
+            .setTransferMode(AudioTrack.MODE_STATIC)
+            .build()
+
+        track.write(buffer, 0, buffer.size)
+        track.play()
+        Thread.sleep(note.durationMs)
+        track.release()
     }
 }
