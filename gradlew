@@ -1,15 +1,10 @@
 #!/bin/sh
 
-# Add default JVM options here. You can also use JAVA_OPTS and GRADLE_OPTS to pass JVM options to this script.
-DEFAULT_JVM_OPTS='"-Xmx64m" "-Xms64m"'
+# Optimized JVM settings for GitHub Actions
+DEFAULT_JVM_OPTS="-Xmx512m -XX:MaxMetaspaceSize=256m"
 
 APP_NAME="Gradle"
 APP_BASE_NAME=`basename "$0"`
-
-# Use the maximum available, or at least 512M, for a bit of speed.
-if [ -n "$JAVA_OPTS" ] ; then
-    DEFAULT_JVM_OPTS="$DEFAULT_JVM_OPTS $JAVA_OPTS"
-fi
 
 # Determine the Java command to use to start the JVM.
 if [ -n "$JAVA_HOME" ] ; then
@@ -18,7 +13,8 @@ else
     JAVACMD="java"
 fi
 
-# Add the wrapper jar to the classpath
+# Locate the wrapper jar
+APP_HOME=$(pwd)
 CLASSPATH=$APP_HOME/gradle/wrapper/gradle-wrapper.jar
 
 # Execute Gradle
