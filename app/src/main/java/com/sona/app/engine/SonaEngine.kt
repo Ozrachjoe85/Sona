@@ -1,67 +1,70 @@
 package com.sona.app.engine
 
-import android.content.Context
+import android.media.AudioAttributes
+import android.media.AudioFormat
+import android.media.AudioTrack
 import android.graphics.Bitmap
 import android.graphics.Color as AndroidColor
-import android.media.midi.MidiManager
-import android.media.midi.MidiReceiver
-import android.os.Handler
-import android.os.Looper
 import kotlin.concurrent.thread
+import kotlin.math.sin
+import kotlin.math.PI
 
-data class SonaComposition(val bpm: Int, val notes: List<Int>, val instrument: Int = 0)
+data class SonaNote(val frequency: Double, val durationMs: Long, val waveType: String)
 
 class SonaEngine {
-    private val scales = mapOf(
-        "warm" to listOf(60, 64, 67, 71, 72),
-        "cold" to listOf(60, 63, 67, 70, 72)
-    )
-
-    fun analyzeBitmap(bitmap: Bitmap): SonaComposition {
-        val scaled = Bitmap.createScaledBitmap(bitmap, 32, 32, false)
-        var red = 0L; var blue = 0L
-        for (x in 0 until 32) {
-            for (y in 0 until 32) {
-                val p = scaled.getPixel(x, y)
-                red += AndroidColor.red(p)
-                blue += AndroidColor.blue(p)
-            }
-        }
-        val type = if (red > blue) "warm" else "cold"
-        return SonaComposition(110, List(12) { (scales[type] ?: scales["warm"]!!).random() }, if (type == "warm") 0 else 40)
+    // Maps colors to base frequencies
+    fun getFrequencyFromColor(color: Int): Double {
+        val r = AndroidColor.red(color)
+        val b = AndroidColor.blue(color)
+        return if (r > b) 440.0 + r else 220.0 + b
     }
 
-    fun generateFromPaths(lineCount: Int): SonaComposition {
-        return SonaComposition(100 + (lineCount * 2), List(8) { listOf(60, 62, 64, 67, 69).random() })
+    fun analyzeBitmap(bitmap: Bitmap): List<SonaNote> {
+        val scaled = Bitmap.createScaledBitmap(bitmap, 10, 10, false)
+        val notes = mutableListOf<SonaNote>()
+        for (i in 0 until 10) {
+            val pixel = scaled.getPixel(i, i)
+            val freq = getFrequencyFromColor(pixel)
+            notes.add(SonaNote(freq, 300, "sine"))
+        }
+        return notes
     }
 }
 
-class SonaAudioPlayer(context: Context) {
-    private var midiReceiver: MidiReceiver? = null
+class SonaAudioPlayer {
+    private val sampleRate = 44100
 
-    init {
-        val midiManager = context.getSystemService(Context.MIDI_SERVICE) as MidiManager
-        val devices = midiManager.devices
-        if (devices.isNotEmpty()) {
-            midiManager.openDevice(devices[0], { device ->
-                midiReceiver = device.openInputPort(0)
-                // Initialize with a Piano sound (0)
-                midiReceiver?.send(byteArrayOf(0xC0.toByte(), 0x00), 0, 2)
-            }, Handler(Looper.getMainLooper()))
-        }
-    }
-
-    fun play(comp: SonaComposition) {
-        val receiver = midiReceiver ?: return
+    fun playProcedural(notes: List<SonaNote>) {
         thread {
-            val delay = (60000 / comp.bpm).toLong()
-            // Switch instrument
-            receiver.send(byteArrayOf(0xC0.toByte(), comp.instrument.toByte()), 0, 2)
-            
-            comp.notes.forEach { note ->
-                receiver.send(byteArrayOf(0x90.toByte(), note.toByte(), 0x64.toByte()), 0, 3)
-                Thread.sleep(delay)
-                receiver.send(byteArrayOf(0x80.toByte(), note.toByte(), 0x00.toByte()), 0, 3)
+            notes.forEach { note ->
+                val numSamples = (note.durationMs * sampleRate / 1000).toInt()
+                val samples = DoubleArray(numSamples)
+                val buffer = ShortArray(numSamples)
+
+                for (i in 0 until numSamples) {
+                    // Rule-based Math: Calculating the actual wave
+                    samples[i] = sin(2.0 * PI * i / (sampleRate / note.frequency))
+                    buffer[i] = (samples[i] * Short.MAX_VALUE).toInt().toShort()
+                }
+
+                val audioTrack = AudioTrack.Builder()
+                    .setAudioAttributes(AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .build())
+                    .setAudioFormat(AudioFormat.Builder()
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(sampleRate)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                        .build())
+                    .setBufferSizeInBytes(buffer.size * 2)
+                    .setTransferMode(AudioTrack.MODE_STATIC)
+                    .build()
+
+                audioTrack.write(buffer, 0, buffer.size)
+                audioTrack.play()
+                Thread.sleep(note.durationMs)
+                audioTrack.release()
             }
         }
     }
