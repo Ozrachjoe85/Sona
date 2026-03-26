@@ -24,24 +24,26 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            var paths = remember { mutableStateListOf<Path>() }
+            val paths = remember { mutableStateListOf<Path>() }
             var currentPath by remember { mutableStateOf<Path?>(null) }
 
             Column(modifier = Modifier.fillMaxSize().background(Color.White)) {
                 Text("SONA", style = MaterialTheme.typography.displayMedium, modifier = Modifier.padding(16.dp))
                 
-                Canvas(modifier = Modifier.weight(1f).fillMaxWidth().pointerInput(Unit) {
-                    detectDragGestures(
-                        onDragStart = { currentPath = Path().apply { moveTo(it.x, it.y) } },
-                        onDrag = { change, _ -> 
-                            currentPath?.lineTo(change.position.x, change.position.y)
-                            val p = currentPath; currentPath = null; currentPath = p 
-                        },
-                        onDragEnd = { currentPath?.let { paths.add(it) }; currentPath = null }
-                    )
-                }) {
-                    paths.forEach { drawPath(it, Color.Black, style = Stroke(8f)) }
-                    currentPath?.let { drawPath(it, Color.Black, style = Stroke(8f)) }
+                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                    Canvas(modifier = Modifier.fillMaxSize().pointerInput(Unit) {
+                        detectDragGestures(
+                            onDragStart = { offset -> currentPath = Path().apply { moveTo(offset.x, offset.y) } },
+                            onDrag = { change, _ -> 
+                                currentPath?.lineTo(change.position.x, change.position.y)
+                                val p = currentPath; currentPath = null; currentPath = p 
+                            },
+                            onDragEnd = { currentPath?.let { paths.add(it) }; currentPath = null }
+                        )
+                    }) {
+                        paths.forEach { drawPath(it, Color.Black, style = Stroke(8f)) }
+                        currentPath?.let { drawPath(it, Color.Black, style = Stroke(8f)) }
+                    }
                 }
 
                 Row(Modifier.fillMaxWidth().padding(24.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
