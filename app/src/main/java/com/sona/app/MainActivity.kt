@@ -31,77 +31,141 @@ import androidx.compose.ui.unit.dp
 import com.sona.app.engine.*
 
 class MainActivity : ComponentActivity() {
-    private lateinit var engine: SonaEngine
-    private lateinit var player: SonaAudioPlayer
+    private val engine = SonaEngine()
+    private val player = SonaAudioPlayer()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        engine = SonaEngine()
-        player = SonaAudioPlayer(this)
-        setContent { SonaApp(engine, player) }
+        setContent {
+            SonaApp(engine, player)
+        }
     }
 }
 
-data class Line(val path: Path, val color: Color, val strokeWidth: Float)
+// Data class to store our "Rule-based" lines
+data class SonaLine(
+    val path: Path, 
+    val color: Color, 
+    val thickness: Float,
+    val yOffset: Float // Used for pitch calculation
+)
 
 @Composable
 fun SonaApp(engine: SonaEngine, player: SonaAudioPlayer) {
     val context = LocalContext.current
-    val lines = remember { mutableStateListOf<Line>() }
+    val lines = remember { mutableStateListOf<SonaLine>() }
     var currentPath by remember { mutableStateOf<Path?>(null) }
-    var currentColor by remember { mutableStateOf(Color.Red) }
+    var currentColor by remember { mutableStateOf(Color.Cyan) }
     var currentThickness by remember { mutableStateOf(10f) }
+    var startY by remember { mutableStateOf(0f) }
     
-    // This holds the uploaded image for display
+    // Image state for the Scanner
     var uploadedBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri?.let {
             val bitmap = MediaStore.Images.Media.getBitmap(context.contentResolver, it)
-            uploadedBitmap = bitmap // Set it to show on screen
-            player.play(engine.analyzeBitmap(bitmap))
+            uploadedBitmap = bitmap
+            // Rule: Scanner analyzes image and plays unique procedural sequence
+            val notes = engine.analyzeBitmap(bitmap)
+            player.playProcedural(notes)
         }
     }
 
-    Column(Modifier.fillMaxSize().background(Color(0xFF1A1A1A))) {
-        Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            listOf(Color.Red, Color.Cyan, Color.Yellow, Color.White).forEach { color ->
-                Box(Modifier.size(40.dp).padding(4.dp).clip(CircleShape).background(color).clickable { currentColor = color })
+    Column(Modifier.fillMaxSize().background(Color(0xFF0F0F0F))) {
+        // --- Painter Tools ---
+        Row(
+            Modifier.fillMaxWidth().padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            val palette = listOf(Color.Cyan, Color.Magenta, Color.Yellow, Color.White)
+            palette.forEach { color ->
+                Box(
+                    Modifier.size(40.dp).clip(CircleShape)
+                        .background(if (currentColor == color) color else color.copy(alpha = 0.5f))
+                        .clickable { currentColor = color }
+                )
             }
-            Slider(value = currentThickness, onValueChange = { currentThickness = it }, valueRange = 4f..60f, modifier = Modifier.weight(1f))
+            Slider(
+                value = currentThickness,
+                onValueChange = { currentThickness = it },
+                valueRange = 2f..80f,
+                modifier = Modifier.weight(1f)
+            )
         }
 
-        Box(Modifier.weight(1f).fillMaxWidth().padding(8.dp).clip(RoundedCornerShape(16.dp)).background(Color.DarkGray)) {
-            // LAYER 1: The Image
+        // --- Canvas Workspace ---
+        Box(
+            Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp)
+                .clip(RoundedCornerShape(24.dp)).background(Color.Black)
+        ) {
+            // Layer 1: Scanned Image
             uploadedBitmap?.let {
                 Image(
                     bitmap = it.asImageBitmap(),
                     contentDescription = null,
                     modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Fit
+                    contentScale = ContentScale.Fit,
+                    alpha = 0.6f
                 )
             }
 
-            // LAYER 2: The Drawing
+            // Layer 2: Drawing Canvas
             Canvas(Modifier.fillMaxSize().pointerInput(Unit) {
                 detectDragGestures(
-                    onDragStart = { currentPath = Path().apply { moveTo(it.x, it.y) } },
-                    onDrag = { change, _ -> 
-                        currentPath?.lineTo(change.position.x, change.position.y)
-                        val p = currentPath; currentPath = null; currentPath = p 
+                    onDragStart = { offset ->
+                        startY = offset.y
+                        currentPath = Path().apply { moveTo(offset.x, offset.y) }
                     },
-                    onDragEnd = { currentPath?.let { lines.add(Line(it, currentColor, currentThickness)) }; currentPath = null }
+                    onDrag = { change, _ ->
+                        currentPath?.lineTo(change.position.x, change.position.y)
+                        // Forced UI Refresh
+                        val p = currentPath; currentPath = null; currentPath = p
+                    },
+                    onDragEnd = {
+                        currentPath?.let {
+                            lines.add(SonaLine(it, currentColor, currentThickness, startY))
+                        }
+                        currentPath = null
+                    }
                 )
             }) {
-                lines.forEach { drawPath(it.path, it.color, style = Stroke(it.strokeWidth)) }
-                currentPath?.let { drawPath(it, currentColor, style = Stroke(currentThickness)) }
+                lines.forEach { line ->
+                    drawPath(line.path, line.color, style = Stroke(line.thickness))
+                }
+                currentPath?.let { path ->
+                    drawPath(path, currentColor, style = Stroke(currentThickness))
+                }
             }
         }
 
-        Row(Modifier.fillMaxWidth().padding(20.dp), Arrangement.SpaceEvenly) {
-            Button(onClick = { lines.clear(); uploadedBitmap = null }) { Text("Scrub") }
-            Button(onClick = { launcher.launch("image/*") }) { Text("Scan") }
-            Button(onClick = { player.play(engine.generateFromPaths(lines.size)) }) { Text("Hear") }
+        // --- Bottom Rule-Based Controls ---
+        Row(
+            Modifier.fillMaxWidth().padding(24.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly
+        ) {
+            Button(onClick = { 
+                lines.clear()
+                uploadedBitmap = null 
+            }) { Text("Scrub") }
+
+            Button(onClick = { launcher.launch("image/*") }) {
+                Text("Scan Image")
+            }
+
+            Button(
+                onClick = {
+                    // RULE: Convert drawing properties to procedural math notes
+                    val proceduralNotes = lines.map { line ->
+                        engine.convertLineToNote(line)
+                    }
+                    player.playProcedural(proceduralNotes)
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = Color.Cyan, contentColor = Color.Black)
+            ) {
+                Text("Hear Drawing")
+            }
         }
     }
 }
