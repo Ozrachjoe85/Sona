@@ -1,5 +1,6 @@
 package com.sona.app
 
+import android.graphics.Bitmap
 import android.os.Bundle
 import android.provider.MediaStore
 import androidx.activity.ComponentActivity
@@ -25,6 +26,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.sona.app.engine.*
+import kotlin.math.abs
 
 class MainActivity : ComponentActivity() {
     private val engine = SonaEngine()
@@ -36,7 +38,12 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-data class SonaLine(val path: Path, val color: Color, val thickness: Float, val yOffset: Float)
+data class SonaLine(
+    val path: Path, 
+    val color: Color, 
+    val thickness: Float, 
+    val yOffset: Float
+)
 
 @Composable
 fun SonaApp(engine: SonaEngine, player: SonaAudioPlayer) {
@@ -44,8 +51,11 @@ fun SonaApp(engine: SonaEngine, player: SonaAudioPlayer) {
     val lines = remember { mutableStateListOf<SonaLine>() }
     var currentPath by remember { mutableStateOf<Path?>(null) }
     var currentColor by remember { mutableStateOf(Color.Cyan) }
-    var currentThickness by remember { mutableStateOf(15f) }
-    var uploadedBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var currentThickness by remember { mutableStateOf(20f) }
+    var uploadedBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    
+    // Safety: Prevents audio spam/crashing
+    var lastSoundY by remember { mutableStateOf(0f) }
 
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri?.let {
@@ -55,44 +65,78 @@ fun SonaApp(engine: SonaEngine, player: SonaAudioPlayer) {
         }
     }
 
-    Column(Modifier.fillMaxSize().background(Color(0xFF08080A))) {
-        // --- HEADER / ICON ---
+    Column(Modifier.fillMaxSize().background(Color(0xFF0A0A0C))) {
+        // --- HEADER ---
         Row(Modifier.fillMaxWidth().padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(45.dp).background(Brush.linearGradient(listOf(Color.Cyan, Color.Magenta)), CircleShape), contentAlignment = Alignment.Center) {
-                Text("S", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 24.sp)
+            Box(
+                Modifier.size(40.dp).background(
+                    Brush.linearGradient(listOf(Color.Cyan, Color.Magenta)), CircleShape
+                ), contentAlignment = Alignment.Center
+            ) {
+                Text("S", color = Color.White, fontWeight = FontWeight.Bold)
             }
-            Spacer(Modifier.width(15.dp))
-            Text("SONA // OS", color = Color.White, letterSpacing = 4.sp, fontWeight = FontWeight.Light)
+            Spacer(Modifier.width(12.dp))
+            Text("SONA // SYNTH", color = Color.White, letterSpacing = 2.sp)
         }
 
         // --- TOOLS ---
-        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(15.dp)) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 20.dp), 
+            horizontalArrangement = Arrangement.spacedBy(15.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             listOf(Color.Cyan, Color.Magenta, Color.Yellow).forEach { color ->
-                Box(Modifier.size(45.dp).clip(CircleShape).background(if (currentColor == color) color else color.copy(alpha = 0.2f)).border(2.dp, color, CircleShape).clickable { currentColor = color })
+                Box(
+                    Modifier.size(48.dp).clip(CircleShape)
+                        .background(if (currentColor == color) color else color.copy(alpha = 0.1f))
+                        .border(2.dp, color, CircleShape)
+                        .clickable { currentColor = color }
+                )
             }
-            Slider(value = currentThickness, onValueChange = { currentThickness = it }, valueRange = 5f..100f, modifier = Modifier.weight(1f))
+            Slider(
+                value = currentThickness, 
+                onValueChange = { currentThickness = it }, 
+                valueRange = 10f..120f, 
+                modifier = Modifier.weight(1f)
+            )
         }
 
         // --- CANVAS ---
-        Box(Modifier.weight(1f).fillMaxWidth().padding(20.dp).clip(RoundedCornerShape(30.dp)).background(Color(0xFF121215)).border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(30.dp))) {
-            uploadedBitmap?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = 0.4f) }
+        Box(
+            Modifier.weight(1f).fillMaxWidth().padding(20.dp)
+                .clip(RoundedCornerShape(24.dp))
+                .background(Color(0xFF141418))
+                .border(1.dp, Color.White.copy(0.05f), RoundedCornerShape(24.dp))
+        ) {
+            uploadedBitmap?.let { 
+                Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = 0.3f) 
+            }
 
             Canvas(Modifier.fillMaxSize().pointerInput(Unit) {
                 detectDragGestures(
-                    onDragStart = { currentPath = Path().apply { moveTo(it.x, it.y) } },
+                    onDragStart = { 
+                        currentPath = Path().apply { moveTo(it.x, it.y) }
+                        lastSoundY = it.y
+                    },
                     onDrag = { change, _ ->
                         currentPath?.lineTo(change.position.x, change.position.y)
                         val p = currentPath; currentPath = null; currentPath = p
                         
-                        // REAL-TIME FEEDBACK: Play tone based on current Y and Color
-                        val freq = 900.0 - (change.position.y / 2.2).coerceIn(0.0, 750.0)
-                        val wave = when(currentColor) {
-                            Color.Cyan -> "sine"; Color.Magenta -> "square"; Color.Yellow -> "sawtooth"; else -> "sine"
+                        // RULE: Real-time Sonification with Throttle
+                        if (abs(change.position.y - lastSoundY) > 25f) {
+                            val freq = 850.0 - (change.position.y / 2.2).coerceIn(0.0, 700.0)
+                            val wave = when(currentColor) {
+                                Color.Cyan -> "sine"
+                                Color.Magenta -> "square"
+                                Color.Yellow -> "sawtooth"
+                                else -> "sine"
+                            }
+                            player.playInstantTone(freq, wave)
+                            lastSoundY = change.position.y
                         }
-                        player.playInstantTone(freq, wave)
                     },
                     onDragEnd = {
-                        currentPath?.let { lines.add(SonaLine(it, currentColor, currentThickness, 0f)) }
+                        currentPath?.let { lines.add(SonaLine(it, currentColor, currentThickness, lastSoundY)) }
                         currentPath = null
                     }
                 )
@@ -103,10 +147,24 @@ fun SonaApp(engine: SonaEngine, player: SonaAudioPlayer) {
         }
 
         // --- ACTIONS ---
-        Row(Modifier.fillMaxWidth().padding(bottom = 30.dp), Arrangement.SpaceEvenly) {
-            OutlinedButton(onClick = { lines.clear(); uploadedBitmap = null }, border = BorderStroke(1.dp, Color.Gray)) { Text("SCRUB", color = Color.White) }
-            Button(onClick = { launcher.launch("image/*") }, colors = ButtonDefaults.buttonColors(containerColor = Color.Magenta)) { Text("SCAN") }
-            Button(onClick = { player.playProcedural(lines.map { engine.convertLineToNote(it) }) }, colors = ButtonDefaults.buttonColors(containerColor = Color.Cyan, contentColor = Color.Black)) { Text("COMPOSE") }
+        Row(Modifier.fillMaxWidth().padding(bottom = 40.dp), Arrangement.SpaceEvenly) {
+            Button(
+                onClick = { lines.clear(); uploadedBitmap = null },
+                colors = ButtonDefaults.buttonColors(containerColor = Color.DarkGray)
+            ) { Text("SCRUB") }
+
+            Button(
+                onClick = { launcher.launch("image/*") },
+                colors = ButtonDefaults.buttonColors(containerColor = Color.Magenta)
+            ) { Text("SCAN") }
+
+            Button(
+                onClick = { 
+                    val notes = lines.map { engine.convertLineToNote(it) }
+                    player.playProcedural(notes) 
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = Color.Cyan, contentColor = Color.Black)
+            ) { Text("PLAY ART") }
         }
     }
 }
